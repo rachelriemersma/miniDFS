@@ -1,3 +1,8 @@
+/*
+ * miniDFS Server
+ * Handles client connections and file operations
+ * Supports concurrent clients using Windows threads
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,12 +22,15 @@ int lock_count = 0;
 HANDLE lock_table_mutex;
 
 #pragma comment(lib, "ws2_32.lib")
-
+/*
+ * Handle a client request
+ * Performs file operations based on request type
+ * Sends response back to client
+ */
 void handle_request(SOCKET client_fd, dfs_request_t *request) {
     dfs_response_t response;
     memset(&response, 0, sizeof(response));
     
-    // Prepend server_files/ to the path for security
     char full_path[MAX_PATH_LEN + 20];
     snprintf(full_path, sizeof(full_path), "server_files/%s", request->path);
     
@@ -117,15 +125,13 @@ void handle_request(SOCKET client_fd, dfs_request_t *request) {
         response.data_len = strlen(response.data);
     } else {
         response.status = STATUS_OK;
-        response.data[0] = '\0';  // Start with empty string
+        response.data[0] = '\0';  
         
         while ((entry = readdir(dir)) != NULL) {
-            // Skip . and ..
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
                 continue;
             }
             
-            // Append filename to response
             strcat(response.data, entry->d_name);
             strcat(response.data, "\n");
         }
@@ -144,7 +150,10 @@ void handle_request(SOCKET client_fd, dfs_request_t *request) {
     
     send(client_fd, (char*)&response, sizeof(response), 0);
 }
-
+/*
+ * Thread function to handle a single client connection
+ * Reads request, processes it, and closes connection
+ */
 DWORD WINAPI client_handler(LPVOID arg) {
     SOCKET client_fd = *(SOCKET*)arg;
     free(arg);
@@ -166,7 +175,6 @@ void init_locks() {
 HANDLE get_file_lock(const char *path) {
     WaitForSingleObject(lock_table_mutex, INFINITE);
     
-    // Check if lock already exists
     for (int i = 0; i < lock_count; i++) {
         if (strcmp(file_locks[i].path, path) == 0) {
             HANDLE mutex = file_locks[i].mutex;
@@ -175,7 +183,6 @@ HANDLE get_file_lock(const char *path) {
         }
     }
     
-    // Create new lock
     if (lock_count < MAX_LOCKS) {
         strncpy(file_locks[lock_count].path, path, MAX_PATH_LEN - 1);
         file_locks[lock_count].mutex = CreateMutex(NULL, FALSE, NULL);
@@ -212,7 +219,7 @@ int main() {
     listen(server_fd, 10);
     
     printf("Server listening on port %d\n", DFS_PORT);
-    
+    // Main server loop - accept and handle client connections
     while (1) {
         client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
         

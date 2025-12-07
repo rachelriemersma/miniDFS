@@ -1,3 +1,7 @@
+/*
+ * miniDFS Client
+ * Command-line tool for accessing remote file system
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +25,6 @@ int main(int argc, char *argv[]) {
     char *command = argv[2];
     char *path = argv[3];
     
-    // Initialize Winsock
     if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
         printf("WSAStartup failed\n");
         return 1;
