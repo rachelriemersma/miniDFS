@@ -3,6 +3,18 @@
 #include <string.h>
 #include <winsock2.h>
 #include "../common/protocol.h"
+#include <dirent.h>
+
+#define MAX_LOCKS 100
+
+typedef struct {
+    char path[MAX_PATH_LEN];
+    HANDLE mutex;
+} file_lock_t;
+
+file_lock_t file_locks[MAX_LOCKS];
+int lock_count = 0;
+HANDLE lock_table_mutex;
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -18,37 +30,47 @@ void handle_request(SOCKET client_fd, dfs_request_t *request) {
     
     switch (request->type) {
         case MSG_READ: {
-            FILE *fp = fopen(full_path, "rb");
-            if (fp == NULL) {
-                printf("File not found: %s\n", full_path);
-                response.status = STATUS_NOT_FOUND;
-                response.data_len = 0;
-            } else {
-                size_t bytes_read = fread(response.data, 1, MAX_DATA_LEN, fp);
-                response.data[bytes_read] = '\0';
-                response.status = STATUS_OK;
-                response.data_len = bytes_read;
-                fclose(fp);
-                printf("Read %zu bytes from %s\n", bytes_read, full_path);
-            }
-            break;
-        }
+    HANDLE lock = get_file_lock(full_path);
+    if (lock) WaitForSingleObject(lock, INFINITE);
+    
+    FILE *fp = fopen(full_path, "rb");
+    if (fp == NULL) {
+        printf("File not found: %s\n", full_path);
+        response.status = STATUS_NOT_FOUND;
+        response.data_len = 0;
+    } else {
+        size_t bytes_read = fread(response.data, 1, MAX_DATA_LEN, fp);
+        response.data[bytes_read] = '\0';
+        response.status = STATUS_OK;
+        response.data_len = bytes_read;
+        fclose(fp);
+        printf("Read %lu bytes from %s\n", (unsigned long)bytes_read, full_path);
+    }
+    
+    if (lock) ReleaseMutex(lock);
+    break;
+}
             
         case MSG_WRITE: {
-            FILE *fp = fopen(full_path, "wb");
-            if (fp == NULL) {
-                printf("Failed to open file for writing: %s\n", full_path);
-                response.status = STATUS_ERROR;
-                response.data_len = 0;
-            } else {
-                size_t bytes_written = fwrite(request->data, 1, request->data_len, fp);
-                fclose(fp);
-                response.status = STATUS_OK;
-                response.data_len = 0;
-                printf("Wrote %zu bytes to %s\n", bytes_written, full_path);
-            }
-            break;
-        }
+    HANDLE lock = get_file_lock(full_path);
+    if (lock) WaitForSingleObject(lock, INFINITE);
+    
+    FILE *fp = fopen(full_path, "wb");
+    if (fp == NULL) {
+        printf("Failed to open file for writing: %s\n", full_path);
+        response.status = STATUS_ERROR;
+        response.data_len = 0;
+    } else {
+        size_t bytes_written = fwrite(request->data, 1, request->data_len, fp);
+        fclose(fp);
+        response.status = STATUS_OK;
+        response.data_len = 0;
+        printf("Wrote %lu bytes to %s\n", (unsigned long)bytes_written, full_path);
+    }
+    
+    if (lock) ReleaseMutex(lock);
+    break;
+}
             
         case MSG_CREATE: {
             FILE *fp = fopen(full_path, "r");
@@ -85,12 +107,34 @@ void handle_request(SOCKET client_fd, dfs_request_t *request) {
         }
             
         case MSG_LIST: {
-            // TODO: Implement directory listing for Week 2
-            response.status = STATUS_OK;
-            strcpy(response.data, "LIST not implemented yet\n");
-            response.data_len = strlen(response.data);
-            break;
+    DIR *dir;
+    struct dirent *entry;
+    
+    dir = opendir("server_files");
+    if (dir == NULL) {
+        response.status = STATUS_ERROR;
+        strcpy(response.data, "Failed to open directory");
+        response.data_len = strlen(response.data);
+    } else {
+        response.status = STATUS_OK;
+        response.data[0] = '\0';  // Start with empty string
+        
+        while ((entry = readdir(dir)) != NULL) {
+            // Skip . and ..
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+            
+            // Append filename to response
+            strcat(response.data, entry->d_name);
+            strcat(response.data, "\n");
         }
+        
+        response.data_len = strlen(response.data);
+        closedir(dir);
+    }
+    break;
+}
             
         default:
             response.status = STATUS_ERROR;
@@ -114,12 +158,43 @@ DWORD WINAPI client_handler(LPVOID arg) {
     return 0;
 }
 
+void init_locks() {
+    lock_table_mutex = CreateMutex(NULL, FALSE, NULL);
+    lock_count = 0;
+}
+
+HANDLE get_file_lock(const char *path) {
+    WaitForSingleObject(lock_table_mutex, INFINITE);
+    
+    // Check if lock already exists
+    for (int i = 0; i < lock_count; i++) {
+        if (strcmp(file_locks[i].path, path) == 0) {
+            HANDLE mutex = file_locks[i].mutex;
+            ReleaseMutex(lock_table_mutex);
+            return mutex;
+        }
+    }
+    
+    // Create new lock
+    if (lock_count < MAX_LOCKS) {
+        strncpy(file_locks[lock_count].path, path, MAX_PATH_LEN - 1);
+        file_locks[lock_count].mutex = CreateMutex(NULL, FALSE, NULL);
+        HANDLE mutex = file_locks[lock_count].mutex;
+        lock_count++;
+        ReleaseMutex(lock_table_mutex);
+        return mutex;
+    }
+    
+    ReleaseMutex(lock_table_mutex);
+    return NULL;
+}
+
 int main() {
     WSADATA wsa;
     SOCKET server_fd, client_fd;
     struct sockaddr_in server_addr, client_addr;
     int client_len = sizeof(client_addr);
-    
+    init_locks();
     // Initialize Winsock
     if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
         printf("WSAStartup failed\n");
