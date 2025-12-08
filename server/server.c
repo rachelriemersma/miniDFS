@@ -197,15 +197,16 @@ DWORD WINAPI client_handler(LPVOID arg) {
     closesocket(client_fd);
     return 0;
 }
-
+// initialize locking when server starts
 void init_locks() {
     lock_table_mutex = CreateMutex(NULL, FALSE, NULL);
     lock_count = 0;
 }
 
 HANDLE get_file_lock(const char *path) {
+    // lock lock table 
     WaitForSingleObject(lock_table_mutex, INFINITE);
-    
+    // look for existing lock
     for (int i = 0; i < lock_count; i++) {
         if (strcmp(file_locks[i].path, path) == 0) {
             HANDLE mutex = file_locks[i].mutex;
@@ -213,7 +214,7 @@ HANDLE get_file_lock(const char *path) {
             return mutex;
         }
     }
-    
+    // create new lock 
     if (lock_count < MAX_LOCKS) {
         strncpy(file_locks[lock_count].path, path, MAX_PATH_LEN - 1);
         file_locks[lock_count].mutex = CreateMutex(NULL, FALSE, NULL);
@@ -222,7 +223,7 @@ HANDLE get_file_lock(const char *path) {
         ReleaseMutex(lock_table_mutex);
         return mutex;
     }
-    
+    // unlock table 
     ReleaseMutex(lock_table_mutex);
     return NULL;
 }
