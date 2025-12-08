@@ -26,15 +26,22 @@ typedef enum {
 } status_t;
 // Client request message structure
 typedef struct {
+    // operation type
     msg_type_t type;
+    // amt of data 
     uint32_t data_len;
+    // file 
     char path[MAX_PATH_LEN];
+    // data to write to file 
     char data[MAX_DATA_LEN];
 } dfs_request_t;
 // Server response message structure
 typedef struct {
+    // check if it worked 
     status_t status;
+    // amt of data
     uint32_t data_len;
+    // data to read 
     char data[MAX_DATA_LEN];
 } dfs_response_t;
 
